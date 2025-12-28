@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 import io
 import datetime
 
@@ -15,9 +19,153 @@ DEFAULT_TAGS = [
     "Web design (網頁設計)", "Business travelers (商務旅客)", "Coworking", "Software"
 ]
 
-# --- 核心函式：解析 Word 檔 (包含表格與段落) ---
+# --- 核心函式：設定 Word 中文字體 (微軟正黑體) ---
+def set_font_style(run, font_name='Microsoft JhengHei', size=10, bold=False):
+    run.font.name = font_name
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    r = run._element
+    r.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+
+# --- 核心函式：生成 Word 表格報告 ---
+def generate_docx_report(campaigns):
+    doc = Document()
+    
+    # 文件標題
+    head = doc.add_heading(level=0)
+    run = head.add_run(f"Meta 廣告投放配置指令單")
+    set_font_style(run, size=18, bold=True)
+    
+    doc.add_paragraph(f"生成日期: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph("---")
+
+    if not campaigns:
+        doc.add_paragraph("目前沒有設定任何行銷活動。")
+        return doc
+
+    for c_idx, campaign in enumerate(campaigns):
+        # 1. Campaign 標題
+        h1 = doc.add_heading(level=1)
+        run = h1.add_run(f"行銷活動 #{c_idx+1}: {campaign['name']}")
+        set_font_style(run, size=14, bold=True)
+
+        # 2. Campaign 摘要表格 (Key-Value 形式)
+        table_camp = doc.add_table(rows=2, cols=4)
+        table_camp.style = 'Table Grid'
+        
+        # 表頭
+        cells = table_camp.rows[0].cells
+        headers = ["行銷活動目標", "預算類型", "預算金額", "CBO 最佳化"]
+        for i, text in enumerate(headers):
+            run = cells[i].paragraphs[0].add_run(text)
+            set_font_style(run, bold=True)
+            cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # 設定背景色 (灰色)
+            tcPr = cells[i]._element.tcPr
+            shd = OxmlElement('w:shd')
+            shd.set(qn('w:val'), 'clear')
+            shd.set(qn('w:fill'), 'D9D9D9') # 淺灰
+            tcPr.append(shd)
+
+        # 內容
+        vals = table_camp.rows[1].cells
+        c_data = [
+            campaign['objective'],
+            campaign['budget_type'],
+            f"NT$ {campaign['budget_amount']}",
+            "開啟 ✅" if campaign['is_cbo'] else "關閉 ❌"
+        ]
+        for i, text in enumerate(c_data):
+            run = vals[i].paragraphs[0].add_run(str(text))
+            set_font_style(run)
+            vals[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        doc.add_paragraph("") # 空行
+
+        # 3. Ad Sets 清單表格
+        if campaign['ad_sets']:
+            h2 = doc.add_heading(level=2)
+            run = h2.add_run("廣告組合 (受眾) 詳細配置")
+            set_font_style(run, size=12, bold=True)
+
+            # 建立表格：名稱 | 轉換/版位 | 受眾詳情 | 素材 ID
+            table_ads = doc.add_table(rows=1, cols=4)
+            table_ads.style = 'Table Grid'
+            table_ads.autofit = False 
+            
+            # 設定欄寬 (依比例)
+            table_ads.columns[0].width = Inches(1.2) # 名稱
+            table_ads.columns[1].width = Inches(1.5) # 設定
+            table_ads.columns[2].width = Inches(2.5) # 受眾
+            table_ads.columns[3].width = Inches(1.5) # 素材
+
+            # 表頭設定
+            hdr_cells = table_ads.rows[0].cells
+            ad_headers = ["組合名稱", "基礎設定", "受眾鎖定 (Targeting)", "素材 ID (Ads)"]
+            for i, text in enumerate(ad_headers):
+                run = hdr_cells[i].paragraphs[0].add_run(text)
+                set_font_style(run, bold=True)
+                hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # 設定背景色
+                tcPr = hdr_cells[i]._element.tcPr
+                shd = OxmlElement('w:shd')
+                shd.set(qn('w:val'), 'clear')
+                shd.set(qn('w:fill'), 'E6E6E6')
+                tcPr.append(shd)
+
+            # 填入 Ad Sets 資料
+            for ad_set in campaign['ad_sets']:
+                row_cells = table_ads.add_row().cells
+                
+                # Col 1: 名稱
+                run = row_cells[0].paragraphs[0].add_run(ad_set['name'] if ad_set['name'] else "(未命名)")
+                set_font_style(run, bold=True)
+                
+                # Col 2: 基礎設定
+                p2 = row_cells[1].paragraphs[0]
+                run = p2.add_run(f"• 目標: {ad_set['goal']}\n")
+                set_font_style(run)
+                run = p2.add_run(f"• 版位: {ad_set['placements_type']}\n")
+                set_font_style(run)
+                if ad_set['excluded_placements']:
+                    run = p2.add_run(f"  (指定: {','.join(ad_set['excluded_placements'])})")
+                    set_font_style(run, size=9)
+                
+                # Col 3: 受眾
+                p3 = row_cells[2].paragraphs[0]
+                # 人口統計
+                run = p3.add_run(f"【人口】{ad_set['age_min']}-{ad_set['age_max']}歲 / {ad_set['gender']} / {','.join(ad_set['locations'])}\n")
+                set_font_style(run)
+                # 興趣
+                tags = ad_set['tags'] + ad_set['manual_tags']
+                tags_str = ", ".join(tags) if tags else "無"
+                run = p3.add_run(f"【興趣】{tags_str}\n")
+                set_font_style(run)
+                # 自訂受眾
+                if ad_set['custom_audience']:
+                    run = p3.add_run(f"【自訂】{ad_set['custom_audience']}\n")
+                    set_font_style(run, color=RGBColor(0, 50, 150))
+                # Advantage+
+                run = p3.add_run(f"【Advantage+】{'開啟' if ad_set['advantage_audience'] else '關閉'}")
+                set_font_style(run)
+
+                # Col 4: 素材
+                p4 = row_cells[3].paragraphs[0]
+                final_ads = ad_set['selected_ads'] + ad_set['manual_ads']
+                if final_ads:
+                    for ad_id in final_ads:
+                        run = p4.add_run(f"□ {ad_id}\n")
+                        set_font_style(run)
+                else:
+                    run = p4.add_run("(未指定)")
+                    set_font_style(run, color=RGBColor(200, 0, 0))
+
+        doc.add_paragraph("\n") # 每個 Campaign 間隔
+
+    return doc
+
+# --- 核心函式：解析 Word 檔 (讀取 ID 用) ---
 def parse_ad_ids_from_docx(uploaded_file):
-    """全面解析 Word 文件，包含「一般段落」與「表格內容」"""
     ad_ids = []
     try:
         doc = Document(uploaded_file)
@@ -35,7 +183,6 @@ def parse_ad_ids_from_docx(uploaded_file):
                 candidate = ""
                 if len(parts) > 1:
                     candidate = parts[1].strip().lstrip(",").lstrip(":").lstrip("，").lstrip("：").strip()
-                
                 if candidate:
                     ad_ids.append(candidate)
                 else:
@@ -64,7 +211,6 @@ def parse_tags_from_csv(uploaded_file):
     return tags
 
 # --- 初始化 Session State ---
-# 結構改為：campaigns = [ { settings..., ad_sets: [ ... ] }, ... ]
 if 'campaigns' not in st.session_state:
     st.session_state.campaigns = []
 
@@ -90,18 +236,14 @@ with st.sidebar:
 
 # --- 主畫面 ---
 st.title("🚀 Meta 廣告全策略配置工具")
-st.info("💡 支援 **多行銷活動 (Multi-Campaign)** 架構。您可以新增多個活動，並在每個活動下獨立管理受眾。")
+st.info("💡 支援 Multi-Campaign 架構。匯出時將生成排版清晰的 Word 表格。")
 
 # --- 全局控制 ---
 if st.button("➕ 建立一個新的行銷活動 (Campaign)", type="primary"):
     st.session_state.campaigns.append({
-        "name": "",
-        "objective": "銷售 (Sales)",
-        "is_cbo": True,
-        "budget_type": "單日預算",
-        "budget_amount": 1000,
-        "start_date": datetime.date.today(),
-        "ad_sets": [] # 每個 Campaign 獨立的 Ad Sets 列表
+        "name": "", "objective": "銷售 (Sales)", "is_cbo": True,
+        "budget_type": "單日預算", "budget_amount": 1000, "start_date": datetime.date.today(),
+        "ad_sets": []
     })
 
 st.markdown("---")
@@ -110,13 +252,11 @@ st.markdown("---")
 campaigns_to_remove = []
 
 for c_idx, campaign in enumerate(st.session_state.campaigns):
-    # 使用 Container 區隔每個 Campaign
     with st.container():
         st.markdown(f"## 📢 行銷活動 #{c_idx + 1}")
         
-        # Campaign 設定區塊
+        # Campaign 設定
         with st.expander(f"設定活動內容：{campaign['name'] if campaign['name'] else '(未命名)'}", expanded=True):
-            # 刪除 Campaign 按鈕
             col_del_camp, _ = st.columns([1, 6])
             if col_del_camp.button(f"🗑️ 刪除整個活動 #{c_idx + 1}", key=f"del_cmp_{c_idx}"):
                 campaigns_to_remove.append(c_idx)
@@ -131,10 +271,9 @@ for c_idx, campaign in enumerate(st.session_state.campaigns):
                 campaign['budget_amount'] = st.number_input("預算金額 (TWD)", min_value=0, value=campaign['budget_amount'], step=100, key=f"cmp_bamt_{c_idx}")
                 campaign['start_date'] = st.date_input("開始日期", value=campaign['start_date'], key=f"cmp_date_{c_idx}")
 
-        # --- 該 Campaign 下的 Ad Sets 管理 ---
+        # --- Ad Sets 管理 ---
         st.markdown(f"**👇 設定活動 #{c_idx + 1} 的廣告組合 (受眾)**")
-        
-        if st.button(f"➕ 新增廣告組合 (至活動 #{c_idx + 1})", key=f"add_adset_{c_idx}"):
+        if st.button(f"➕ 新增廣告組合", key=f"add_adset_{c_idx}"):
             campaign['ad_sets'].append({
                 "name": "", "goal": "網站", "tags": [], "manual_tags": [],
                 "custom_audience": "", "age_min": 25, "age_max": 55,
@@ -144,110 +283,59 @@ for c_idx, campaign in enumerate(st.session_state.campaigns):
             })
 
         adsets_to_remove = []
-        # 顯示該 Campaign 下的所有 Ad Sets
         for a_idx, ad_set in enumerate(campaign['ad_sets']):
-            # 使用嵌套的 Expander 或不同背景色塊
             st.info(f"廣告組合 {c_idx+1}-{a_idx+1}: {ad_set['name'] if ad_set['name'] else '設定中...'}")
-            
-            # Ad Set 內容
             c1, c2 = st.columns(2)
-            
             with c1:
                 ad_set['name'] = st.text_input("組合名稱", value=ad_set['name'], key=f"c{c_idx}_a{a_idx}_name")
                 ad_set['goal'] = st.selectbox("轉換位置", ["網站", "應用程式", "訊息", "通話"], key=f"c{c_idx}_a{a_idx}_goal")
-                
-                # 受眾
                 ad_set['tags'] = st.multiselect("興趣標籤", options=available_tags, default=list(set(ad_set['tags']) & set(available_tags)), key=f"c{c_idx}_a{a_idx}_tags")
                 extra = st.text_input("手動輸入標籤", key=f"c{c_idx}_a{a_idx}_extra")
                 ad_set['manual_tags'] = [t.strip() for t in extra.split(",") if t.strip()]
-                
                 ad_set['advantage_audience'] = st.checkbox("開啟 Advantage+ 受眾", value=ad_set['advantage_audience'], key=f"c{c_idx}_a{a_idx}_aa")
-
             with c2:
-                # 刪除 Ad Set 按鈕
-                if st.button("🗑️", key=f"del_adset_c{c_idx}_a{a_idx}", help="刪除此廣告組合"):
+                if st.button("🗑️", key=f"del_adset_c{c_idx}_a{a_idx}"):
                     adsets_to_remove.append(a_idx)
-                
                 ad_set['custom_audience'] = st.text_area("自訂受眾", value=ad_set['custom_audience'], height=68, key=f"c{c_idx}_a{a_idx}_ca")
-                
                 col_age1, col_age2 = st.columns(2)
                 ad_set['age_min'] = col_age1.number_input("最小年齡", 13, 65, ad_set['age_min'], key=f"c{c_idx}_a{a_idx}_amin")
                 ad_set['age_max'] = col_age2.number_input("最大年齡", 13, 65, ad_set['age_max'], key=f"c{c_idx}_a{a_idx}_amax")
                 ad_set['gender'] = st.radio("性別", ["所有性別", "男性", "女性"], horizontal=True, key=f"c{c_idx}_a{a_idx}_gen")
                 
-                # 素材選擇 (關鍵功能)
                 if available_ad_ids:
                     ad_set['selected_ads'] = st.multiselect("選擇素材 ID", options=available_ad_ids, default=list(set(ad_set['selected_ads']) & set(available_ad_ids)), key=f"c{c_idx}_a{a_idx}_ads")
                 else:
                     man_ads = st.text_area("手動輸入素材 ID", key=f"c{c_idx}_a{a_idx}_mads")
                     ad_set['manual_ads'] = [x.strip() for x in man_ads.split("\n") if x.strip()]
 
-            # 版位設定 (選填)
             with st.expander("版位設定 (進階)", expanded=False):
                 ad_set['placements_type'] = st.radio("版位模式", ["Advantage+ (自動)", "手動指定"], key=f"c{c_idx}_a{a_idx}_pmode")
                 if ad_set['placements_type'] == "手動指定":
                     ad_set['excluded_placements'] = st.multiselect("排除/指定版位", ["FB動態", "IG動態", "Stories", "Reels"], key=f"c{c_idx}_a{a_idx}_excl")
         
-        # 執行 Ad Set 刪除
         for i in sorted(adsets_to_remove, reverse=True):
             del campaign['ad_sets'][i]
             
     st.markdown("---")
 
-# 執行 Campaign 刪除
 for i in sorted(campaigns_to_remove, reverse=True):
     del st.session_state.campaigns[i]
 
-# --- 輸出報告 ---
-if st.button("📝 生成全策略 Brief 文件", type="primary"):
-    report = f"# Meta 廣告全策略 Brief\n"
-    report += f"**生成時間**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-    report += f"**總計**: {len(st.session_state.campaigns)} 個行銷活動\n\n"
-    report += "---"
+# --- 輸出報告 (Word) ---
+st.header("📄 產出投放 Brief")
+st.markdown("完成所有設定後，點擊下方按鈕下載 Word 格式的指令單。")
+
+if st.button("下載 Word 投放指令單 (.docx)", type="primary"):
+    # 產生 Word 物件
+    doc = generate_docx_report(st.session_state.campaigns)
     
-    if not st.session_state.campaigns:
-        report += "\n\n(尚未建立任何行銷活動)"
-
-    for c_idx, campaign in enumerate(st.session_state.campaigns):
-        report += f"\n\n## 📢 行銷活動 {c_idx+1}: {campaign['name']}\n"
-        report += f"> **目標**: {campaign['objective']} | **預算**: {campaign['budget_type']} ${campaign['budget_amount']} | **CBO**: {'✅' if campaign['is_cbo'] else '❌'}\n\n"
-        
-        if not campaign['ad_sets']:
-            report += "   *(此活動下尚未設定廣告組合)*\n"
-
-        for a_idx, ad_set in enumerate(campaign['ad_sets']):
-            report += f"### 🔹 組合 {c_idx+1}-{a_idx+1}: {ad_set['name']}\n"
-            
-            # 受眾區塊
-            report += f"**【受眾設定】**\n"
-            report += f"- **人口**: {ad_set['age_min']}-{ad_set['age_max']} 歲 / {ad_set['gender']} / {', '.join(ad_set['locations'])}\n"
-            
-            tags = ad_set['tags'] + ad_set['manual_tags']
-            tags_str = ", ".join(tags) if tags else "無"
-            report += f"- **興趣標籤**: {tags_str}\n"
-            
-            if ad_set['custom_audience']:
-                report += f"- **自訂受眾**: {ad_set['custom_audience']}\n"
-            report += f"- **Advantage+ 受眾**: {'開啟' if ad_set['advantage_audience'] else '關閉'}\n"
-
-            # 版位區塊
-            report += f"**【版位設定】**\n"
-            report += f"- {ad_set['placements_type']}"
-            if ad_set['excluded_placements']:
-                report += f" (指定: {', '.join(ad_set['excluded_placements'])})"
-            report += "\n"
-
-            # 素材區塊
-            report += f"**【素材配置】**\n"
-            final_ads = ad_set['selected_ads'] + ad_set['manual_ads']
-            if final_ads:
-                for ad_id in final_ads:
-                    report += f"- ` {ad_id} `\n"
-            else:
-                report += "- (尚未指定素材)\n"
-            
-            report += "\n"
-        report += "---\n"
-
-    st.text_area("Markdown 輸出預覽", value=report, height=600)
-    st.download_button("下載完整 Brief (.txt)", data=report, file_name=f"Meta_Full_Strategy_{datetime.date.today()}.txt")
+    # 轉為二進位串流
+    bio = io.BytesIO()
+    doc.save(bio)
+    
+    st.download_button(
+        label="📥 點擊下載檔案",
+        data=bio.getvalue(),
+        file_name=f"Meta_Brief_{datetime.date.today()}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
