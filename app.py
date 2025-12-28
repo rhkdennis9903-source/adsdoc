@@ -19,17 +19,26 @@ DEFAULT_TAGS = [
     "Web design (網頁設計)", "Business travelers (商務旅客)", "Coworking", "Software"
 ]
 
+# --- 預設 Meta 標準事件清單 ---
+META_EVENTS = [
+    "購買 (Purchase)", 
+    "潛在客戶 (Leads)", 
+    "完成註冊 (Complete Registration)", 
+    "加入購物車 (Add to Cart)", 
+    "開始結帳 (Initiate Checkout)", 
+    "查看內容 (View Content)", 
+    "聯絡我們 (Contact)", 
+    "安排預約 (Schedule)", 
+    "提交申請 (Submit Application)"
+]
+
 # --- 核心函式：設定 Word 中文字體 (微軟正黑體) 與顏色 ---
-# 修正點：新增 color 參數，預設為 None
 def set_font_style(run, font_name='Microsoft JhengHei', size=10, bold=False, color=None):
     run.font.name = font_name
     run.font.size = Pt(size)
     run.font.bold = bold
-    
-    # 如果有傳入顏色，則設定顏色
     if color:
         run.font.color.rgb = color
-        
     r = run._element
     r.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
@@ -55,7 +64,7 @@ def generate_docx_report(campaigns):
         run = h1.add_run(f"行銷活動 #{c_idx+1}: {campaign['name']}")
         set_font_style(run, size=14, bold=True)
 
-        # 2. Campaign 摘要表格 (Key-Value 形式)
+        # 2. Campaign 摘要表格
         table_camp = doc.add_table(rows=2, cols=4)
         table_camp.style = 'Table Grid'
         
@@ -66,7 +75,6 @@ def generate_docx_report(campaigns):
             run = cells[i].paragraphs[0].add_run(text)
             set_font_style(run, bold=True)
             cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            # 設定背景色 (灰色)
             tcPr = cells[i]._element.tcPr
             shd = OxmlElement('w:shd')
             shd.set(qn('w:val'), 'clear')
@@ -94,32 +102,27 @@ def generate_docx_report(campaigns):
             run = h2.add_run("廣告組合 (受眾) 詳細配置")
             set_font_style(run, size=12, bold=True)
 
-            # 建立表格：名稱 | 轉換/版位 | 受眾詳情 | 素材 ID
             table_ads = doc.add_table(rows=1, cols=4)
             table_ads.style = 'Table Grid'
             table_ads.autofit = False 
             
-            # 設定欄寬 (依比例)
             table_ads.columns[0].width = Inches(1.2) # 名稱
-            table_ads.columns[1].width = Inches(1.5) # 設定
-            table_ads.columns[2].width = Inches(2.5) # 受眾
+            table_ads.columns[1].width = Inches(1.8) # 設定 (加寬一點放兩個目標)
+            table_ads.columns[2].width = Inches(2.2) # 受眾
             table_ads.columns[3].width = Inches(1.5) # 素材
 
-            # 表頭設定
             hdr_cells = table_ads.rows[0].cells
-            ad_headers = ["組合名稱", "基礎設定", "受眾鎖定 (Targeting)", "素材 ID (Ads)"]
+            ad_headers = ["組合名稱", "轉換目標與版位", "受眾鎖定 (Targeting)", "素材 ID (Ads)"]
             for i, text in enumerate(ad_headers):
                 run = hdr_cells[i].paragraphs[0].add_run(text)
                 set_font_style(run, bold=True)
                 hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                # 設定背景色
                 tcPr = hdr_cells[i]._element.tcPr
                 shd = OxmlElement('w:shd')
                 shd.set(qn('w:val'), 'clear')
                 shd.set(qn('w:fill'), 'E6E6E6')
                 tcPr.append(shd)
 
-            # 填入 Ad Sets 資料
             for ad_set in campaign['ad_sets']:
                 row_cells = table_ads.add_row().cells
                 
@@ -127,11 +130,16 @@ def generate_docx_report(campaigns):
                 run = row_cells[0].paragraphs[0].add_run(ad_set['name'] if ad_set['name'] else "(未命名)")
                 set_font_style(run, bold=True)
                 
-                # Col 2: 基礎設定
+                # Col 2: 基礎設定 (位置 + 事件 + 版位)
                 p2 = row_cells[1].paragraphs[0]
-                run = p2.add_run(f"• 目標: {ad_set['goal']}\n")
+                run = p2.add_run(f"📍 位置: {ad_set['goal']}\n")
                 set_font_style(run)
-                run = p2.add_run(f"• 版位: {ad_set['placements_type']}\n")
+                
+                # 這裡特別標示具體的轉換事件
+                run = p2.add_run(f"🎯 事件: {ad_set['conversion_event']}\n")
+                set_font_style(run, bold=True, color=RGBColor(0, 100, 0)) # 深綠色強調
+                
+                run = p2.add_run(f"📱 版位: {ad_set['placements_type']}\n")
                 set_font_style(run)
                 if ad_set['excluded_placements']:
                     run = p2.add_run(f"  (指定: {','.join(ad_set['excluded_placements'])})")
@@ -139,19 +147,18 @@ def generate_docx_report(campaigns):
                 
                 # Col 3: 受眾
                 p3 = row_cells[2].paragraphs[0]
-                # 人口統計
                 run = p3.add_run(f"【人口】{ad_set['age_min']}-{ad_set['age_max']}歲 / {ad_set['gender']} / {','.join(ad_set['locations'])}\n")
                 set_font_style(run)
-                # 興趣
+                
                 tags = ad_set['tags'] + ad_set['manual_tags']
                 tags_str = ", ".join(tags) if tags else "無"
                 run = p3.add_run(f"【興趣】{tags_str}\n")
                 set_font_style(run)
-                # 自訂受眾 (顯示為藍色)
+                
                 if ad_set['custom_audience']:
                     run = p3.add_run(f"【自訂】{ad_set['custom_audience']}\n")
                     set_font_style(run, color=RGBColor(0, 50, 150))
-                # Advantage+
+                
                 run = p3.add_run(f"【Advantage+】{'開啟' if ad_set['advantage_audience'] else '關閉'}")
                 set_font_style(run)
 
@@ -163,11 +170,10 @@ def generate_docx_report(campaigns):
                         run = p4.add_run(f"□ {ad_id}\n")
                         set_font_style(run)
                 else:
-                    # 未指定 (顯示為紅色)
                     run = p4.add_run("(未指定)")
                     set_font_style(run, color=RGBColor(200, 0, 0))
 
-        doc.add_paragraph("\n") # 每個 Campaign 間隔
+        doc.add_paragraph("\n")
 
     return doc
 
@@ -282,7 +288,10 @@ for c_idx, campaign in enumerate(st.session_state.campaigns):
         st.markdown(f"**👇 設定活動 #{c_idx + 1} 的廣告組合 (受眾)**")
         if st.button(f"➕ 新增廣告組合", key=f"add_adset_{c_idx}"):
             campaign['ad_sets'].append({
-                "name": "", "goal": "網站", "tags": [], "manual_tags": [],
+                "name": "", 
+                "goal": "網站 (Website)", # 預設位置
+                "conversion_event": "購買 (Purchase)", # 預設事件
+                "tags": [], "manual_tags": [],
                 "custom_audience": "", "age_min": 25, "age_max": 55,
                 "locations": ["台灣"], "gender": "所有性別",
                 "advantage_audience": True, "placements_type": "Advantage+ (自動版位)",
@@ -295,7 +304,15 @@ for c_idx, campaign in enumerate(st.session_state.campaigns):
             c1, c2 = st.columns(2)
             with c1:
                 ad_set['name'] = st.text_input("組合名稱", value=ad_set['name'], key=f"c{c_idx}_a{a_idx}_name")
-                ad_set['goal'] = st.selectbox("轉換位置", ["網站", "應用程式", "訊息", "通話"], key=f"c{c_idx}_a{a_idx}_goal")
+                
+                # [修改點] 拆分為兩個輸入框：位置 + 事件
+                col_g1, col_g2 = st.columns(2)
+                with col_g1:
+                    ad_set['goal'] = st.selectbox("轉換位置 (Location)", ["網站 (Website)", "應用程式 (App)", "訊息 (Messaging)", "通話 (Calls)"], key=f"c{c_idx}_a{a_idx}_goal")
+                with col_g2:
+                    # 提供標準事件選單，但也允許自由輸入
+                    ad_set['conversion_event'] = st.selectbox("轉換目標 (Event)", META_EVENTS, index=0, key=f"c{c_idx}_a{a_idx}_event")
+                
                 ad_set['tags'] = st.multiselect("興趣標籤", options=available_tags, default=list(set(ad_set['tags']) & set(available_tags)), key=f"c{c_idx}_a{a_idx}_tags")
                 extra = st.text_input("手動輸入標籤", key=f"c{c_idx}_a{a_idx}_extra")
                 ad_set['manual_tags'] = [t.strip() for t in extra.split(",") if t.strip()]
@@ -333,10 +350,7 @@ st.header("📄 產出投放 Brief")
 st.markdown("完成所有設定後，點擊下方按鈕下載 Word 格式的指令單。")
 
 if st.button("下載 Word 投放指令單 (.docx)", type="primary"):
-    # 產生 Word 物件
     doc = generate_docx_report(st.session_state.campaigns)
-    
-    # 轉為二進位串流
     bio = io.BytesIO()
     doc.save(bio)
     
