@@ -19,11 +19,17 @@ DEFAULT_TAGS = [
     "Web design (網頁設計)", "Business travelers (商務旅客)", "Coworking", "Software"
 ]
 
-# --- 核心函式：設定 Word 中文字體 (微軟正黑體) ---
-def set_font_style(run, font_name='Microsoft JhengHei', size=10, bold=False):
+# --- 核心函式：設定 Word 中文字體 (微軟正黑體) 與顏色 ---
+# 修正點：新增 color 參數，預設為 None
+def set_font_style(run, font_name='Microsoft JhengHei', size=10, bold=False, color=None):
     run.font.name = font_name
     run.font.size = Pt(size)
     run.font.bold = bold
+    
+    # 如果有傳入顏色，則設定顏色
+    if color:
+        run.font.color.rgb = color
+        
     r = run._element
     r.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
@@ -141,7 +147,7 @@ def generate_docx_report(campaigns):
                 tags_str = ", ".join(tags) if tags else "無"
                 run = p3.add_run(f"【興趣】{tags_str}\n")
                 set_font_style(run)
-                # 自訂受眾
+                # 自訂受眾 (顯示為藍色)
                 if ad_set['custom_audience']:
                     run = p3.add_run(f"【自訂】{ad_set['custom_audience']}\n")
                     set_font_style(run, color=RGBColor(0, 50, 150))
@@ -157,6 +163,7 @@ def generate_docx_report(campaigns):
                         run = p4.add_run(f"□ {ad_id}\n")
                         set_font_style(run)
                 else:
+                    # 未指定 (顯示為紅色)
                     run = p4.add_run("(未指定)")
                     set_font_style(run, color=RGBColor(200, 0, 0))
 
